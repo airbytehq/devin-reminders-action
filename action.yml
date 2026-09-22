@@ -216,6 +216,30 @@ runs:
 
         echo "Validation passed."
 
+    - name: Purge expired lock artifacts
+      if: >
+        (inputs.lock-mode == 'always') ||
+        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        # Expired artifacts stay listed by the artifacts API, and the lock action
+        # treats any listed artifact as a held lock, so an expired lock deadlocks
+        # every subsequent run until it is deleted.
+        RESULT=$(curl -s -H "Authorization: Bearer ${GH_TOKEN}" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=devin-reminders-lock&per_page=100")
+        EXPIRED_IDS=$(echo "${RESULT}" | jq -r '.artifacts[] | select(.expired == true) | .id')
+
+        for artifact_id in ${EXPIRED_IDS}; do
+          echo "Deleting expired lock artifact ${artifact_id}"
+          curl -fsS -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${artifact_id}" \
+            || echo "::warning::Could not delete expired lock artifact ${artifact_id}"
+        done
+
     - name: Acquire artifact lock
       id: lock-acquire
       if: >
