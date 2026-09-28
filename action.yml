@@ -216,6 +216,95 @@ runs:
 
         echo "Validation passed."
 
+    - name: Clean up stale lock artifacts
+      # The upstream lock action treats ANY artifact with the lock name as
+      # "held", including artifacts that are expired or left behind by a
+      # concurrent run that crashed before releasing. If we don't proactively
+      # clean these up, every subsequent run will time out on the lock and
+      # the queue stays jammed until somebody deletes the artifact by hand.
+      #
+      # A valid lock is only held for the duration of an in-progress workflow
+      # run (seconds to a few minutes). So any lock artifact that is expired,
+      # or whose owning workflow run has already finished, is stale and safe
+      # to delete.
+      if: >
+        (inputs.lock-mode == 'always') ||
+        (inputs.lock-mode == 'auto' && steps.resolve.outputs.is_list != 'true')
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        LOCK_NAME="devin-reminders-lock"
+        API_URL="https://api.github.com/repos/${REPO}/actions/artifacts"
+        RESPONSE="$(curl -fsS \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          "${API_URL}?name=${LOCK_NAME}&per_page=100")"
+        COUNT="$(echo "${RESPONSE}" | jq '.artifacts | length')"
+        if [ "${COUNT}" = "0" ]; then
+          echo "No existing '${LOCK_NAME}' artifacts found."
+          exit 0
+        fi
+
+        echo "Found ${COUNT} '${LOCK_NAME}' artifact(s); checking for stale ones..."
+
+        # An artifact is stale if it is expired OR if its owning workflow
+        # run has already concluded (conclusion != null).
+        STALE_IDS="$(echo "${RESPONSE}" | jq -r '
+          .artifacts[]
+          | [.id, .expired, .workflow_run.id // empty] | @tsv
+        ')"
+
+        while IFS=$'\t' read -r ID EXPIRED RUN_ID; do
+          [ -z "${ID}" ] && continue
+          IS_STALE="false"
+          REASON=""
+          if [ "${EXPIRED}" = "true" ]; then
+            IS_STALE="true"
+            REASON="expired"
+          elif [ -n "${RUN_ID}" ]; then
+            # Don't use `curl -f` here: a 404/410 (run was deleted by
+            # retention or an operator) must not abort the whole script —
+            # that would leave the stale lock in place and re-wedge the
+            # queue, which is exactly what this step exists to prevent.
+            RUN_BODY_FILE="$(mktemp)"
+            RUN_HTTP_CODE="$(curl -s -o "${RUN_BODY_FILE}" -w '%{http_code}' \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}" || echo "000")"
+            if [ "${RUN_HTTP_CODE}" = "200" ]; then
+              RUN_STATUS="$(jq -r '.conclusion // empty' < "${RUN_BODY_FILE}")"
+              if [ -n "${RUN_STATUS}" ]; then
+                IS_STALE="true"
+                REASON="owning run ${RUN_ID} already concluded (${RUN_STATUS})"
+              fi
+            elif [ "${RUN_HTTP_CODE}" = "404" ] || [ "${RUN_HTTP_CODE}" = "410" ]; then
+              IS_STALE="true"
+              REASON="owning run ${RUN_ID} no longer exists (HTTP ${RUN_HTTP_CODE})"
+            else
+              echo "  Warning: run status check for ${RUN_ID} returned HTTP ${RUN_HTTP_CODE}; leaving lock in place."
+            fi
+            rm -f "${RUN_BODY_FILE}"
+          fi
+
+          if [ "${IS_STALE}" = "true" ]; then
+            echo "Deleting stale lock artifact ${ID} (${REASON})..."
+            HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${API_URL}/${ID}")"
+            if [ "${HTTP_CODE}" = "204" ] || [ "${HTTP_CODE}" = "404" ]; then
+              echo "  Deleted (HTTP ${HTTP_CODE})."
+            else
+              echo "  Warning: delete returned HTTP ${HTTP_CODE}; ignoring."
+            fi
+          else
+            echo "Keeping lock artifact ${ID} (owning run ${RUN_ID} still in progress)."
+          fi
+        done <<< "${STALE_IDS}"
+
     - name: Acquire artifact lock
       id: lock-acquire
       if: >
