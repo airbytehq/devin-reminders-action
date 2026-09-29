@@ -48,7 +48,7 @@ A reusable GitHub Action for scheduling, listing, cancelling, and firing reminde
 ### Schedule a Reminder
 
 ```yaml
-- uses: aaronsteers/devin-reminders-action@v1
+- uses: airbytehq/devin-reminders-action@v1
   with:
     action: put
     remind-at: "2026-02-20T17:00:00-08:00"
@@ -63,7 +63,7 @@ A reusable GitHub Action for scheduling, listing, cancelling, and firing reminde
 ### List Reminders
 
 ```yaml
-- uses: aaronsteers/devin-reminders-action@v1
+- uses: airbytehq/devin-reminders-action@v1
   id: reminders
   with:
     action: list
@@ -77,7 +77,7 @@ A reusable GitHub Action for scheduling, listing, cancelling, and firing reminde
 Cancel by GUIDs for a session (requires `agent-session-url` + `cancel-guids`):
 
 ```yaml
-- uses: aaronsteers/devin-reminders-action@v1
+- uses: airbytehq/devin-reminders-action@v1
   with:
     action: cancel
     agent-session-url: "https://app.devin.ai/sessions/abc123"
@@ -144,7 +144,7 @@ jobs:
       actions: read
     steps:
       - name: Execute reminder action
-        uses: aaronsteers/devin-reminders-action@v0.4.0
+        uses: airbytehq/devin-reminders-action@v0.4.0
         with:
           action: 'list'
           reminder-timezone: America/Los_Angeles
@@ -159,7 +159,7 @@ jobs:
       actions: write
     steps:
       - name: Execute reminder action
-        uses: aaronsteers/devin-reminders-action@v0.4.0
+        uses: airbytehq/devin-reminders-action@v0.4.0
         with:
           action: 'put'
           lock-mode: auto
@@ -181,7 +181,7 @@ jobs:
       actions: write
     steps:
       - name: Execute reminder action
-        uses: aaronsteers/devin-reminders-action@v0.4.0
+        uses: airbytehq/devin-reminders-action@v0.4.0
         with:
           action: 'cancel'
           lock-mode: auto
@@ -201,7 +201,7 @@ jobs:
       actions: write
     steps:
       - name: Execute reminder action
-        uses: aaronsteers/devin-reminders-action@v0.4.0
+        uses: airbytehq/devin-reminders-action@v0.4.0
         with:
           action: 'cron'
           lock-mode: auto
